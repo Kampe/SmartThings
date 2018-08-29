@@ -64,11 +64,11 @@ def firstPage() {
 
         debug("REFRESH COUNT :: ${refreshCount}")
 
-        if(!state.subscribe) {
-            debug("Subscribe to location")
-            // subscribe to answers from HUB
-            subscribe(location, null, locationHandler, [filterEvents:false])
-            state.subscribe = true
+        if (!state.subscribe) { 
+          debug("Subscribe to location")
+          // subscribe to answers from HUB
+          subscribe(location, "ssdpTerm.urn:Belkin:service:basicevent:1", locationHandler, [filterEvents:false])
+          state.subscribe = true
         }
 
         //ssdp request every 25 seconds
@@ -127,7 +127,16 @@ def getWemoDimmerLightSwitches() {
 
 def installed() {
     debug("Installed with settings: ${settings}")
-    initialize()
+    unschedule()
+    unsubscribe()
+    if (selecteddimmerLightSwitches) {
+        adddimmerLightSwitches()
+    }
+    // run once subscribeToDevices
+    subscribeToDevices()
+
+    //setup cron jobs
+    runEvery5Minutes(subscribeToDevices)
 }
 
 def uninstalled() {
@@ -148,7 +157,15 @@ private removeChildDevices(devices) {
 
 def updated() {
     debug("Updated with settings: ${settings}")
-    initialize()
+    unschedule()
+    if (selecteddimmerLightSwitches) {
+        adddimmerLightSwitches()
+    }
+    // run once subscribeToDevices
+    subscribeToDevices()
+
+    //setup cron jobs
+    runEvery5Minutes(subscribeToDevices)
 }
 
 def resubscribe() {
@@ -168,6 +185,8 @@ def refreshDevices() {
 
 def subscribeToDevices() {
     debug("subscribeToDevices() called")
+    // Need to discover each subscribe call or updated ports wont be caught!
+    discoverAllWemoTypes()
     def devices = getAllChildDevices()
     devices.each { d ->
         debug('Call subscribe on '+d.id)
@@ -176,15 +195,14 @@ def subscribeToDevices() {
 }
 
 def adddimmerLightSwitches() {
+    debug("adddimmerLightSwitches()")
     def dimmerLightSwitches = getWemoDimmerLightSwitches()
-
     selecteddimmerLightSwitches.each { dni ->
-        def selectedDimmerLightSwitch = dimmerLightSwitches.find { it.value.mac == dni } ?: dimmerLightSwitches.find { "${it.value.ip}:${it.value.port}" == dni }
-
+        def selectedDimmerLightSwitch = dimmerLightSwitches.find { it?.value?.mac == dni }
         def d
         if (selectedDimmerLightSwitch) {
             d = getChildDevices()?.find {
-                it.dni == selectedDimmerLightSwitch.value.mac || it.device.getDataValue("mac") == selectedDimmerLightSwitch.value.mac
+                it?.dni == selectedDimmerLightSwitch?.value?.mac || it?.device?.getDataValue("mac") == selectedDimmerLightSwitch?.value?.mac
             }
         }
 
@@ -201,26 +219,9 @@ def adddimmerLightSwitches() {
             debug("Mac: " + selectedDimmerLightSwitch.value.mac)
             debug("Hub: " + (selectedDimmerLightSwitch?.value.hub))
             debug("Data: " + data)
-            d = addChildDevice("kris2k2", "Wemo Dimmer Light Switch", selectedDimmerLightSwitch.value.mac, (selectedDimmerLightSwitch?.value.hub), data)
+            d = addChildDevice("kris2k2", "Wemo Dimmer Light Switch", selectedDimmerLightSwitch.value.mac, selectedDimmerLightSwitch?.value.hub, data)
         }
     }
-}
-
-def initialize() {
-    debug("Initialiaze")
-    // remove location subscription afterwards
-    unsubscribe()
-    state.subscribe = false
-
-    if (selecteddimmerLightSwitches) {
-        adddimmerLightSwitches()
-    }
-
-    // run once subscribeToDevices
-    subscribeToDevices()
-
-    //setup cron jobs
-    schedule("10 * * * * ?", "subscribeToDevices")
 }
 
 def locationHandler(evt) {
@@ -246,23 +247,15 @@ def locationHandler(evt) {
         } else { // just update the values
             debug("Updating devices")
             def d = dimmerLightSwitches."${parsedEvent.ssdpUSN.toString()}"
-            boolean deviceChangedValues = false
-
             if(d.ip != parsedEvent.ip || d.port != parsedEvent.port) {
                 d.ip = parsedEvent.ip
                 d.port = parsedEvent.port
-                deviceChangedValues = true
-            }
-
-            if (deviceChangedValues) {
-                def children = getChildDevices()
-                children.each {
-                    if (it.getDeviceDataByName("mac") == parsedEvent.mac) {
-                        it.subscribe(parsedEvent.ip, parsedEvent.port)
-                    }
+                def child = getChildDevice(parsedEvent.mac)
+                if (child) {
+                   debug("Triggering subscribe on: ${parsedEvent.mac} ${parsedEvent.ip} ${parsedEvent.port}")
+                   child.subscribe(parsedEvent.ip, parsedEvent.port)   
                 }
             }
-
         }
     } else if (parsedEvent.headers && parsedEvent.body) {
         def headerString = new String(parsedEvent.headers.decodeBase64())
