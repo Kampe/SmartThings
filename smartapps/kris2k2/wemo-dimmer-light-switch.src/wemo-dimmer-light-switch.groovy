@@ -28,7 +28,7 @@ definition(
 }
 
 preferences {
-    page(name:"firstPage", title:"WeMo Dimmer Light Switch Setup", content:"firstPage")
+    page(name:"firstPage", title:"Wemo WiFi Smart Dimmer Setup", content:"firstPage")
 }
 
 private debug(data) {
@@ -52,7 +52,10 @@ HOST: ${deviceNetworkId}
 private verifyDevices() {
     def dimmerLightSwitches = getWemoDimmerLightSwitches().findAll { it?.value?.verified != true }
     dimmerLightSwitches.each {
-        getFriendlyName((it.value.ip + ":" + it.value.port))
+        int port = convertHexToInt(it.value.port)
+        String ip = convertHexToIP(it.value.ip)
+        String host = "${ip}:${port}"
+        getFriendlyName("${host}")
     }
 }
 
@@ -64,11 +67,11 @@ def firstPage() {
 
         debug("REFRESH COUNT :: ${refreshCount}")
 
-        if(!state.subscribe) {
-            debug("Subscribe to location")
-            // subscribe to answers from HUB
-            subscribe(location, null, locationHandler, [filterEvents:false])
-            state.subscribe = true
+        if (!state.subscribe) { 
+          debug("Subscribe to location")
+          // subscribe to answers from HUB
+          subscribe(location, null, locationHandler, [filterEvents:false])
+          state.subscribe = true
         }
 
         //ssdp request every 25 seconds
@@ -84,8 +87,11 @@ def firstPage() {
         def dimmerLightSwitchesDiscovered = dimmerLightSwitchesDiscovered()
 
         return dynamicPage(name:"firstPage", title:"Discovery Started!", nextPage:"", refreshInterval: refreshInterval, install:true, uninstall: true) {
+            section() {
+                paragraph "Currently scanning your network for new Wemo WiFi Smart Dimmers. If any are found, they will be added to the list below for you to select for installation."
+            }
             section("Select a device...") {
-                input "selecteddimmerLightSwitches", "enum", required:false, title:"Select Dimmer Light Switches \n(${dimmerLightSwitchesDiscovered.size() ?: 0} found)", multiple:true, options:dimmerLightSwitchesDiscovered
+                input "selecteddimmerLightSwitches", "enum", required:false, title:"Select Dimmer(s) \n(${dimmerLightSwitchesDiscovered.size() ?: 0} found)", multiple:true, options:dimmerLightSwitchesDiscovered
             }
         }
     } else {
@@ -113,7 +119,7 @@ def dimmerLightSwitchesDiscovered() {
     def dimmerLightSwitches = getWemoDimmerLightSwitches().findAll { it?.value?.verified == true }
     def map = [:]
     dimmerLightSwitches.each {
-        def value = it.value.name ?: "WeMo Dimmer Switch ${it.value.ssdpUSN.split(':')[1][-3..-1]}"
+        def value = it.value.name ?: "Wemo WiFi Smart Dimmer ${it.value.ssdpUSN.split(':')[1][-3..-1]}"
         def key = it.value.mac
         map["${key}"] = value
     }
@@ -127,7 +133,16 @@ def getWemoDimmerLightSwitches() {
 
 def installed() {
     debug("Installed with settings: ${settings}")
-    initialize()
+    unschedule()
+    unsubscribe()
+    if (selecteddimmerLightSwitches) {
+        adddimmerLightSwitches()
+    }
+    // run once subscribeToDevices
+    subscribeToDevices()
+
+    //setup cron jobs
+    runEvery5Minutes(subscribeToDevices)
 }
 
 def uninstalled() {
@@ -148,7 +163,15 @@ private removeChildDevices(devices) {
 
 def updated() {
     debug("Updated with settings: ${settings}")
-    initialize()
+    unschedule()
+    if (selecteddimmerLightSwitches) {
+        adddimmerLightSwitches()
+    }
+    // run once subscribeToDevices
+    subscribeToDevices()
+
+    //setup cron jobs
+    runEvery5Minutes(subscribeToDevices)
 }
 
 def resubscribe() {
@@ -168,6 +191,8 @@ def refreshDevices() {
 
 def subscribeToDevices() {
     debug("subscribeToDevices() called")
+    // Need to discover each subscribe call or updated ports wont be caught!
+    discoverAllWemoTypes()
     def devices = getAllChildDevices()
     devices.each { d ->
         debug('Call subscribe on '+d.id)
@@ -176,21 +201,20 @@ def subscribeToDevices() {
 }
 
 def adddimmerLightSwitches() {
+    debug("adddimmerLightSwitches()")
     def dimmerLightSwitches = getWemoDimmerLightSwitches()
-
     selecteddimmerLightSwitches.each { dni ->
-        def selectedDimmerLightSwitch = dimmerLightSwitches.find { it.value.mac == dni } ?: dimmerLightSwitches.find { "${it.value.ip}:${it.value.port}" == dni }
-
+        def selectedDimmerLightSwitch = dimmerLightSwitches.find { it?.value?.mac == dni }
         def d
         if (selectedDimmerLightSwitch) {
             d = getChildDevices()?.find {
-                it.dni == selectedDimmerLightSwitch.value.mac || it.device.getDataValue("mac") == selectedDimmerLightSwitch.value.mac
+                it?.dni == selectedDimmerLightSwitch?.value?.mac || it?.device?.getDataValue("mac") == selectedDimmerLightSwitch?.value?.mac
             }
         }
 
         if (!d) {
             def data  = [
-                 "label": selectedDimmerLightSwitch?.value?.name ?: "Wemo Dimmer Light Switch",
+                 "label": selectedDimmerLightSwitch?.value?.name ?: "Wemo WiFi Smart Dimmer",
                  "data": [
                      "mac": selectedDimmerLightSwitch.value.mac,
                      "ip": selectedDimmerLightSwitch.value.ip,
@@ -201,26 +225,9 @@ def adddimmerLightSwitches() {
             debug("Mac: " + selectedDimmerLightSwitch.value.mac)
             debug("Hub: " + (selectedDimmerLightSwitch?.value.hub))
             debug("Data: " + data)
-            d = addChildDevice("kris2k2", "Wemo Dimmer Light Switch", selectedDimmerLightSwitch.value.mac, (selectedDimmerLightSwitch?.value.hub), data)
+            d = addChildDevice("sirtwist", "Wemo WiFi Smart Dimmer", selectedDimmerLightSwitch.value.mac, selectedDimmerLightSwitch?.value.hub, data)
         }
     }
-}
-
-def initialize() {
-    debug("Initialiaze")
-    // remove location subscription afterwards
-    unsubscribe()
-    state.subscribe = false
-
-    if (selecteddimmerLightSwitches) {
-        adddimmerLightSwitches()
-    }
-
-    // run once subscribeToDevices
-    subscribeToDevices()
-
-    //setup cron jobs
-    schedule("10 * * * * ?", "subscribeToDevices")
 }
 
 def locationHandler(evt) {
@@ -246,23 +253,15 @@ def locationHandler(evt) {
         } else { // just update the values
             debug("Updating devices")
             def d = dimmerLightSwitches."${parsedEvent.ssdpUSN.toString()}"
-            boolean deviceChangedValues = false
-
             if(d.ip != parsedEvent.ip || d.port != parsedEvent.port) {
                 d.ip = parsedEvent.ip
                 d.port = parsedEvent.port
-                deviceChangedValues = true
-            }
-
-            if (deviceChangedValues) {
-                def children = getChildDevices()
-                children.each {
-                    if (it.getDeviceDataByName("mac") == parsedEvent.mac) {
-                        it.subscribe(parsedEvent.ip, parsedEvent.port)
-                    }
+                def child = getChildDevice(parsedEvent.mac)
+                if (child) {
+                   debug("Triggering subscribe on: ${parsedEvent.mac} ${parsedEvent.ip} ${parsedEvent.port}")
+                   child.subscribe(parsedEvent.ip, parsedEvent.port)   
                 }
             }
-
         }
     } else if (parsedEvent.headers && parsedEvent.body) {
         def headerString = new String(parsedEvent.headers.decodeBase64())
@@ -349,4 +348,12 @@ private Boolean hasAllHubsOver(String desiredFirmware) {
 
 private List getRealHubFirmwareVersions() {
     return location.hubs*.firmwareVersionString.findAll { it }
+}
+
+private Integer convertHexToInt(hex) {
+	Integer.parseInt(hex,16)
+}
+
+private String convertHexToIP(hex) {
+	[convertHexToInt(hex[0..1]),convertHexToInt(hex[2..3]),convertHexToInt(hex[4..5]),convertHexToInt(hex[6..7])].join(".")
 }
