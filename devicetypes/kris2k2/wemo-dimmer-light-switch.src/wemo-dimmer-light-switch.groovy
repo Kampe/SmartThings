@@ -34,7 +34,7 @@ metadata {
 
     // UI tile definitions
 	tiles(scale: 2) {
-		multiAttributeTile(name:"rich-control", type: "switch", canChangeIcon: true){
+		multiAttributeTile(name:"rich-control", type: "lighting", canChangeIcon: true){
 			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
 				attributeState "on", label:'${name}', action:"switch.off", icon:"st.Home.home30", backgroundColor:"#00A0DC", nextState:"turningOff"
 				attributeState "off", label:'${name}', action:"switch.on", icon:"st.Home.home30", backgroundColor:"#ffffff", nextState:"turningOn"
@@ -253,7 +253,7 @@ def refresh() {
 }
 
 def subscribe(hostAddress) {
-    debug("Executing 'subscribe()'")
+    debug("Executing subscribe(${hostAddress})")
     def address = getCallBackAddress()
     new physicalgraph.device.HubAction("""SUBSCRIBE /upnp/event/basicevent1 HTTP/1.1
 HOST: ${hostAddress}
@@ -267,6 +267,7 @@ User-Agent: CyberGarage-HTTP/1.0
 }
 
 def subscribe() {
+    debug("calling getHostAddress()")
     subscribe(getHostAddress())
 }
 
@@ -286,7 +287,7 @@ def subscribe(ip, port) {
 }
 
 def resubscribe() {
-    debug("Executing 'resubscribe()'")
+    debug("Executing resubscribe()")
     def sid = getDeviceDataByName("subscriptionId")
 
     new physicalgraph.device.HubAction("""SUBSCRIBE /upnp/event/basicevent1 HTTP/1.1
